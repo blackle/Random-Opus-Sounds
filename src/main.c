@@ -39,9 +39,10 @@ int main(int argc, char** argv) {
 		.next = NULL,
 	};
 	ao_device* device = ao_open_live(ao_driver_id("pulse"), &format, &option);
+	// ao_device* device = ao_open_file(ao_driver_id("wav"), "samples.wav", 1, &format, &option);
 	(void) device;
 
-	for (int j = 0; j < 100; j++) {
+	for (int j = 0; j < 32; j++) {
 	random_packet(42342+j);
 	OpusDecoder* opus_decoder = opus_decoder_create(SAMPLE_RATE, 1, NULL);
 	for (int k = 0; k < 4; k++) {
