@@ -79,14 +79,13 @@ int main(int argc, char** argv) {
 		.next = NULL,
 	};
 	(void) option;
-	ao_device* device = ao_open_live(ao_driver_id("pulse"), &format, &option);
+	// ao_device* device = ao_open_live(ao_driver_id("pulse"), &format, &option);
 
 	for (int j = 0; j < 100; j++) {
-		// todo: not working for some reason :c
-		// char filename[80];
-		// snprintf(filename, 80, "samples/opus_%02d.wav", j);
-		// printf("writing %s\n", filename);
-		// ao_device* device = ao_open_file(ao_driver_id("wav"), filename, 1, &format, NULL);
+		char filename[80];
+		snprintf(filename, 80, "samples/opus_%02d.wav", j);
+		printf("writing %s\n", filename);
+		ao_device* device = ao_open_file(ao_driver_id("wav"), filename, 1, &format, NULL);
 		play_random_packet(j, device);
 	}
 
