@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <math.h>
 #include <time.h>
+#include "brrUtils.h"
 
 #define HEADER0 "┌──────┬──────┬───┬───┬────┐"
 #define HEADER1 "│ name │ seed │len│dtx│adsr│"
