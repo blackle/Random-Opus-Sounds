@@ -9,12 +9,12 @@
 #include <math.h>
 #include <time.h>
 
-#define HEADER0 "┌──────┬──────┬───┬───┬─┬─┬─┬─┐"
-#define HEADER1 "│ name │ seed │len│dtx│a│d│s│r│"
-#define HEADER2 "┝━━━━━━┿━━━━━━┿━━━┿━━━┿━┿━┿━┿━┥"
-#define FOOTER0 "└──────┴──────┴───┴───┴─┴─┴─┴─┘"
+#define HEADER0 "┌──────┬──────┬───┬───┬────┐"
+#define HEADER1 "│ name │ seed │len│dtx│adsr│"
+#define HEADER2 "┝━━━━━━┿━━━━━━┿━━━┿━━━┿━━━━┥"
+#define FOOTER0 "└──────┴──────┴───┴───┴────┘"
 #define DEL     "│"
-#define NUMROWS 10
+#define NUMROWS 30
 #define NUMCOLS 8
 #define MAXNAME 6
 #define MAXSEED 0x1000000
@@ -26,6 +26,7 @@ typedef struct {
 	char name[MAXNAME];
 	int namelen;
 	int seed;
+	int last_seed;
 	int len;
 	bool dtx;
 	int a;
@@ -34,7 +35,13 @@ typedef struct {
 	int r;
 } RowData;
 
-#define HIGHLIGHT_IF_SEL(x, body) do{if(sel==x) attron(A_STANDOUT); body; attroff(A_STANDOUT);}while(0)
+#define HIGHLIGHT_IF_SEL(x, body) do { \
+	if(row->namelen == 0) attron(A_DIM); \
+	if(sel==x) attron(A_STANDOUT); \
+	body; \
+	attroff(A_STANDOUT); \
+	attroff(A_DIM); \
+} while(0)
 void print_row(int idx, int sel, RowData* row) {
 	(void) sel;
 	move(3+idx, 0);
@@ -48,11 +55,8 @@ void print_row(int idx, int sel, RowData* row) {
 	HIGHLIGHT_IF_SEL(3, printw("%s", row->dtx ? " on" : "off"));
 	printw("│");
 	HIGHLIGHT_IF_SEL(4, printw("%01x", row->a));
-	printw("│");
 	HIGHLIGHT_IF_SEL(5, printw("%01x", row->d));
-	printw("│");
 	HIGHLIGHT_IF_SEL(6, printw("%01x", row->s));
-	printw("│");
 	HIGHLIGHT_IF_SEL(7, printw("%01x", row->r));
 	printw("│");
 }
@@ -61,7 +65,8 @@ void init_row(RowData* row) {
 	memset(&row->name, ' ', 6);
 	row->namelen = 0;
 	row->seed = 0;
-	row->len = 1;
+	row->last_seed = 0;
+	row->len = 5;
 	row->dtx = 1;
 	row->a = row->d = row->s = row->r = 0;
 }
@@ -89,6 +94,7 @@ void play_random_packet(uint32_t seed, int total_len, bool use_dtx, ao_device* d
 	random_packet(seed);
 	OpusDecoder* opus_decoder = opus_decoder_create(SAMPLE_RATE, 1, NULL);
 
+	float empty_data[DECODED_DATA_SIZE] = { 0 };
 	float decoded_data[DECODED_DATA_SIZE];
 	int length;
 	length = opus_decode_float(opus_decoder, PACKET, PACKET_SIZE, decoded_data, DECODED_DATA_SIZE, 0);
@@ -122,44 +128,22 @@ void play_random_packet(uint32_t seed, int total_len, bool use_dtx, ao_device* d
 		}
 		(void)length;
 	}
+	// play some empty data afterward, otherwise the audio server gets angry
+	ao_play(device, (char*)empty_data, DECODED_DATA_SIZE*sizeof(int16_t));
 	opus_decoder_destroy(opus_decoder);
-}
-
-int main_old(int argc, char** argv) {
-	(void) argc; (void) argv;
-	ao_initialize();
-	ao_sample_format format = {
-		.bits = 16,
-		.channels = 1,
-		.rate = SAMPLE_RATE,
-		.byte_format = AO_FMT_NATIVE,
-		.matrix = NULL,
-	};
-	ao_option option = {
-		.key = "buffer_time",
-		.value = "200",
-		.next = NULL,
-	};
-	int driver_id = ao_default_driver_id();
-	if (driver_id == -1) {
-		fprintf(stderr, "Couldn't find default driver for libao!\n");
-		return -1;
-	}
-	ao_device* device = ao_open_live(driver_id, &format, &option);
-
-	for (int j = 0; j < 1000; j++) {
-		// char filename[80];
-		// snprintf(filename, 80, "samples/opus_%02d.wav", j);
-		// printf("writing %s\n", filename);
-		// ao_device* device = ao_open_file(ao_driver_id("wav"), filename, 1, &format, NULL);
-		play_random_packet(j%16 + (rand() % 8 == 0 && j % 2 == 1 ? rand() : 0) + 6969, 6, rand() % 3, device);
-	}
-
-	return 0;
 }
 
 int main(int argc, char** argv) {
 	(void) argc; (void) argv;
+	//todo:
+	// [ ] print usage
+	// [ ] argv[1] should be project folder
+	// [ ] create folder if it does not exist
+	// [ ] open/parse saved rowdata if it exists
+	// [ ] dump rowdata on change or exit
+	// [ ] convert generated sample to brr and back before playback
+	// [ ] write preferences txt file
+	// [ ] resample to 32000hz
 
 	ao_initialize();
 	ao_sample_format format = {
@@ -203,7 +187,7 @@ int main(int argc, char** argv) {
 	int row = 0;
 	int ch;
 	while ((ch = getch()) > 7) {
-		mvprintw(0, 0, " %d ", ch);
+		// mvprintw(0, 0, " %d ", ch);
 		int oldrow = row;
 		if (ch == KEY_DOWN)  row = (row + 1) % NUMROWS;
 		if (ch == KEY_UP)    row = (row - 1 + NUMROWS) % NUMROWS;
@@ -256,17 +240,25 @@ int main(int argc, char** argv) {
 			if (col == 7) rowdat->r = (rowdat->r + MAXTUNING + inc) % MAXTUNING;
 
 			if (col == 1 && ch == (int)'r') {
+				rowdat->last_seed = rowdat->seed;
 				rowdat->seed = rand() % MAXSEED;
+				changed = true;
+			}
+			if (col == 1 && ch == (int)'z') {
+				int tmp = rowdat->seed;
+				rowdat->seed = rowdat->last_seed;
+				rowdat->last_seed = tmp;
 				changed = true;
 			}
 		}
 
+		print_row(row, col, rowdat);
+		refresh();
 		if (changed || ch == (int)'\n') {
 			play_random_packet(rowdat->seed, rowdat->len, rowdat->dtx, device);
 			// flush input since the playback might take long
 			flushinp();
 		}
-		print_row(row, col, rowdat);
 	}
 
 	// destroy ncurses
