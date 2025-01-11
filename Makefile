@@ -11,4 +11,4 @@ $(PROJECT) : $(HEADERS) $(SOURCES) Makefile $(LIBBRR)
 
 $(LIBBRR) : $(wildcard brrUtils/*.c brrUtils/*.h)
 	sed -i 's/^\(add_executable\|target_link_libraries\)/# \1/' brrUtils/CMakeLists.txt
-	cd brrUtils; mkdir build; cd build; cmake .. --target brr; make
+	cd brrUtils; mkdir build; cd build; cmake ..; make

@@ -1,4 +1,3 @@
-#include <opus/opus.h>
 #include <ao/ao.h>
 #include <ncurses.h>
 #include <locale.h>
@@ -9,15 +8,18 @@
 #include <math.h>
 #include <time.h>
 #include "brrUtils.h"
+#include "opusgen.h"
 
-#define HEADER0 "┌──────┬──────┬───┬───┬────┐"
-#define HEADER1 "│ name │ seed │len│dtx│adsr│"
-#define HEADER2 "┝━━━━━━┿━━━━━━┿━━━┿━━━┿━━━━┥"
-#define FOOTER0 "└──────┴──────┴───┴───┴────┘"
+#define HEADER0 "┌────────┬──────┬───┬───┬────┐"
+#define HEADER1 "│name    │seed  │len│dtx│adsr│"
+#define HEADER2 "┝━━━━━━━━┿━━━━━━┿━━━┿━━━┿━━━━┥"
+#define FOOTER0 "└────────┴──────┴───┴───┴────┘"
 #define DEL     "│"
-#define NUMROWS 30
+#define XSTRINGIFY(s) STRINGIFY(s)
+#define STRINGIFY(x) #x
+#define NUMROWS 10
 #define NUMCOLS 8
-#define MAXNAME 6
+#define MAXNAME 8
 #define MAXSEED 0x1000000
 #define MAXLEN 17
 #define MAXDTX 2
@@ -43,11 +45,12 @@ typedef struct {
 	attroff(A_STANDOUT); \
 	attroff(A_DIM); \
 } while(0)
+
 void print_row(int idx, int sel, RowData* row) {
 	(void) sel;
 	move(3+idx, 0);
 	printw("│");
-	HIGHLIGHT_IF_SEL(0, printw("%.6s", row->name));
+	HIGHLIGHT_IF_SEL(0, printw("%." XSTRINGIFY(MAXNAME) "s", row->name));
 	printw("│");
 	HIGHLIGHT_IF_SEL(1, printw("%06x", row->seed));
 	printw("│");
@@ -63,7 +66,7 @@ void print_row(int idx, int sel, RowData* row) {
 }
 
 void init_row(RowData* row) {
-	memset(&row->name, ' ', 6);
+	memset(&row->name, ' ', MAXNAME);
 	row->namelen = 0;
 	row->seed = 0;
 	row->last_seed = 0;
@@ -72,66 +75,25 @@ void init_row(RowData* row) {
 	row->a = row->d = row->s = row->r = 0;
 }
 
-#define PACKET_SIZE 185
-static unsigned char PACKET[] = {
-	[0] = 0x73, [1] = 0x03, [2 ... PACKET_SIZE] = 0x00
-};
-#define DECODED_DATA_SIZE 1440
-#define SAMPLE_RATE 48000
-
-void random_packet(uint32_t seed) {
-	uint32_t state = seed;
-	for (int i = 2; i < PACKET_SIZE; i++) {
-		state++;
-		state = state ^ (state << 13u);
-		state = state ^ (state >> 17u);
-		state = state ^ (state << 5u);
-		state *= 1685821657u;
-		PACKET[i] = state;
-	}
-}
-
 void play_random_packet(uint32_t seed, int total_len, bool use_dtx, ao_device* device) {
-	random_packet(seed);
-	OpusDecoder* opus_decoder = opus_decoder_create(SAMPLE_RATE, 1, NULL);
+	int16_t* packetdata = 0;
+	size_t packetdata_len = 0;
+	opus_generate(seed, total_len, use_dtx, &packetdata, &packetdata_len);
+	// fprintf(stderr, "%p len=%ld\n", packetdata, packetdata_len);
+	size_t packetdata_samples = packetdata_len/sizeof(int16_t);
 
-	float empty_data[DECODED_DATA_SIZE] = { 0 };
-	float decoded_data[DECODED_DATA_SIZE];
-	int length;
-	length = opus_decode_float(opus_decoder, PACKET, PACKET_SIZE, decoded_data, DECODED_DATA_SIZE, 0);
-	(void)length;
+	size_t brrlen = 9*((15+packetdata_samples)/16);
+	uint8_t* brr_out = (uint8_t*)malloc(brrlen+9);
+	brrEncode(packetdata, brr_out, packetdata_samples, -1, false);
+	memset(packetdata, 0, packetdata_len);
+	brrDecode(brr_out, packetdata, brrlen, false);
+	free(brr_out);
 
-	float last_rms = 0.;
-	for (int i = 0; i < total_len; i++) {
-		float rms = 0;
-		for (int i = 0; i < DECODED_DATA_SIZE; i++) {
-			rms += pow(decoded_data[i], 2);
-		}
-		rms = sqrt(rms/DECODED_DATA_SIZE);
-		if (i == 0) {
-			last_rms = rms;
-		}
-		int16_t converted_data[DECODED_DATA_SIZE];
-		for (int i = 0; i < DECODED_DATA_SIZE; i++) {
-			// fade in to the next rms
-			float t = ((float)i)/(DECODED_DATA_SIZE-1);
-			float thisscale = t*fmax(last_rms,rms) + (1-t)*last_rms;
-			converted_data[i] = tanh(decoded_data[i]/thisscale/4.) * INT16_MAX;
-		}
-		last_rms = fmax(rms,last_rms);
-		ao_play(device, (char*)converted_data, DECODED_DATA_SIZE*sizeof(int16_t));
-		if (i < 0 || !use_dtx) {
-			random_packet(seed);
-			length = opus_decode_float(opus_decoder, PACKET, PACKET_SIZE, decoded_data, DECODED_DATA_SIZE, 0);
-		} else {
-			// discontinuous transmission
-			length = opus_decode_float(opus_decoder, PACKET, PACKET_SIZE, decoded_data, DECODED_DATA_SIZE, 1);
-		}
-		(void)length;
-	}
+	ao_play(device, (char*)packetdata, packetdata_len);
 	// play some empty data afterward, otherwise the audio server gets angry
-	ao_play(device, (char*)empty_data, DECODED_DATA_SIZE*sizeof(int16_t));
-	opus_decoder_destroy(opus_decoder);
+	// ao_play(device, (char*)empty_data, DECODED_DATA_SIZE_16);
+
+	free(packetdata);
 }
 
 int main(int argc, char** argv) {
@@ -142,7 +104,7 @@ int main(int argc, char** argv) {
 	// [ ] create folder if it does not exist
 	// [ ] open/parse saved rowdata if it exists
 	// [ ] dump rowdata on change or exit
-	// [ ] convert generated sample to brr and back before playback
+	// [/] convert generated sample to brr and back before playback
 	// [ ] write preferences txt file
 	// [ ] resample to 32000hz
 
@@ -150,7 +112,7 @@ int main(int argc, char** argv) {
 	ao_sample_format format = {
 		.bits = 16,
 		.channels = 1,
-		.rate = SAMPLE_RATE,
+		.rate = 48000,
 		.byte_format = AO_FMT_NATIVE,
 		.matrix = NULL,
 	};
